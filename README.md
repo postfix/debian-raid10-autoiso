@@ -2,13 +2,13 @@
 ## Fully-Automated Debian 12 ISO (RAID-10 + LVM)
 
 This repository contains:
-
+```
 my-auto-debian/
 ├── build_iso.sh
 ├── preseed.production.cfg   # <-- filter keeps only Seagate drives
 └── preseed.test.cfg         # <-- accepts every /dev/sd*   (good for VMs)  
 └── README.md    # <-- these instructions  
-
+```
 ### 1. Prerequisites (Host)
 
 | package | why |
