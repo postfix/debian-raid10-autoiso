@@ -25,11 +25,15 @@ Install them on Debian/Ubuntu:
 sudo apt update
 sudo apt install xorriso isolinux genisoimage grub-pc-bin grub-efi-amd64-bin bsdtar wget
 ```
-### Build both variants
+### Build
 
 ```bash
 ./build_iso.sh prod   # vendor-filtered ISO for real hardware
 ./build_iso.sh test   # generic ISO for VMs / dev boxes
 ```
+### Customising
 
+- Change vendor filter – edit the grep -i Seagate line in partman/early_command.
+- Swap size – leave “guided_size max” (installer creates 4 GiB LV) or add an explicit LVM recipe if you need a fixed split.
+- GRUB menu timeout – adjust in isolinux/txt.cfg and boot/grub/grub.cfg before rebuilding.
 
