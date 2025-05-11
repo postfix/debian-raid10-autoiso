@@ -3,7 +3,7 @@
 
 This repository contains:
 ```
-my-auto-debian/
+debian-raid10-autoiso/
 ├── build_iso.sh
 ├── preseed.production.cfg   # <-- filter keeps only Seagate drives
 └── preseed.test.cfg         # <-- accepts every /dev/sd*   (good for VMs)  
