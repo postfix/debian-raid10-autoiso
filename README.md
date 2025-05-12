@@ -104,7 +104,14 @@ virsh console debian-auto
 
 ### First login
 ```bash
+# password prompt should fail
+ssh john@vm-ip   # press Enter when asked for password – should be denied
+# root login should fail too
+ssh root@vm-ip   # Permission denied
+# check live server config
 ssh john@<new-ip>   # logs in via your SSH key
 sudo lvs            # shows vg0/root + vg0/swap
 cat /proc/mdstat    # shows md0 (RAID1) + md1 (RAID10)
+sudo sshd -T | grep -E 'passwordauthentication|challengeresponseauthentication|permitrootlogin'
+# → all three report "no"
 ```
