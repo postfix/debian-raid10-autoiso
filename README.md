@@ -1,7 +1,7 @@
 # debian-raid10-autoiso
 ## Fully-Automated Debian 12 ISO (RAID-10 + LVM)
 
-This repository contains:
+###This repository contains:
 ```
 debian-raid10-autoiso/
 ├── build_iso.sh
@@ -53,7 +53,7 @@ sudo apt install xorriso isolinux grub-pc-bin grub-efi-amd64-bin libarchive-tool
 ./build_iso.sh -m prod   # vendor-filtered ISO for real hardware
 ./build_iso.sh -m test -p "r00t  # generic ISO for VMs / dev boxes
 ```
-## Command-line flags recap
+### Command-line flags
 
 | Flag (long / short) | Required | Example | Effect |
 |---------------------|----------|---------|--------|
@@ -64,7 +64,24 @@ sudo apt install xorriso isolinux grub-pc-bin grub-efi-amd64-bin libarchive-tool
 If `--source` is **not** supplied the script checks for  
 `debian-12.10.0-amd64-netinst.iso` in the working directory and downloads it automatically when missing. :contentReference[oaicite:0]{index=0}
 
+### Reminder: prod vs test ISOs
 
+| ISO | Drive-selection logic | Use case |
+|-----|----------------------|----------|
+| `debian-12.10.0-prod.iso` | *early_command* keeps `grep -qi Seagate` – only genuine Seagate disks become part of the array. | Bare-metal servers with known hardware. |
+| `debian-12.10.0-test.iso` | *early_command* calls `list-devices disk` – every disk the kernel sees is used. | KVM/virt-io, NVMe workstations, CI pipelines. |
+
+Everything else—RAID-1 */boot*, RAID-10 PV, LVM root + swap, john’s account, key + sudo, GRUB on every disk—remains identical.
+
+### Password & sudo policy
+
+* **Root** is locked.  
+* **john** is created; with no `--password` flag he authenticates **only** via his SSH key, and with `--password` he gets an interactive password hashed to SHA-512.  
+* Late-command adds john to group *sudo* and inserts  
+  `%sudo ALL=(ALL:ALL) NOPASSWD: ALL`  
+  into `/etc/sudoers`, so sudo never prompts.
+
+---
 
 ### Customising
 
@@ -72,7 +89,7 @@ If `--source` is **not** supplied the script checks for
 - Swap size – leave “guided_size max” (installer creates 4 GiB LV) or add an explicit LVM recipe if you need a fixed split.
 - GRUB menu timeout – adjust in isolinux/txt.cfg and boot/grub/grub.cfg before rebuilding.
 
-### Quick test in KVM (four virtual drives, headless)
+### Quick KVM test
 
 ```bash
 for i in {1..4}; do qemu-img create -f qcow2 disk$i.qcow2 10G; done
@@ -80,10 +97,11 @@ virt-install --name debian-auto --ram 4096 --vcpus 2 \
   --disk disk1.qcow2,bus=virtio --disk disk2.qcow2,bus=virtio \
   --disk disk3.qcow2,bus=virtio --disk disk4.qcow2,bus=virtio \
   --graphics none --console pty,target_type=serial \
-  --cdrom debian-12.10.0-auto.iso \
+  --cdrom debian-12.10.0-test.iso \
   --extra-args 'console=ttyS0,115200n8'
-virsh console debian-auto          # watch the unattended install
+virsh console debian-auto
 ```
+
 ### First login
 ```bash
 ssh john@<new-ip>   # logs in via your SSH key
