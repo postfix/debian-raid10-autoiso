@@ -30,14 +30,14 @@ d-i partman/early_command string \
 
 ### Prerequisites (Host)
 
-| Package                              | Why                                                         | Ref                    |
-| ------------------------------------ | ----------------------------------------------------------- | ---------------------- |
-| `xorriso`                            | rebuild hybrid BIOS/UEFI ISO                                | ([GitHub][1])          |
-| `isolinux`                           | ships `isohdpfx.bin` MBR needed by `xorriso -isohybrid-mbr` | ([Ask Ubuntu][2])      |
-| `grub-pc-bin` + `grub-efi-amd64-bin` | provide the EFI boot image                                  | ([Debian Wiki][3])     |
-| `bsdtar` ( `libarchive-tools` )      | unpacks ISO without root                                    | ([Debian Wiki][4])     |
-| `openssl`                            | creates SHA-512 hash with `openssl passwd -6`               | ([James H. Fisher][5]) |
-| `wget`, `md5sum`, `sed`              | misc helpers                                                | docs & man-pages       |
+| Package                              | Why                                                         | 
+| ------------------------------------ | ----------------------------------------------------------- |
+| `xorriso`                            | rebuild hybrid BIOS/UEFI ISO                                |
+| `isolinux`                           | ships `isohdpfx.bin` MBR needed by `xorriso -isohybrid-mbr` |
+| `grub-pc-bin` + `grub-efi-amd64-bin` | provide the EFI boot image                                  |
+| `bsdtar` ( `libarchive-tools` )      | unpacks ISO without root                                    |
+| `openssl`                            | creates SHA-512 hash with `openssl passwd -6`               |
+| `wget`, `md5sum`, `sed`              | misc helpers                                                | 
 
 
 
