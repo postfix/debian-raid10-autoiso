@@ -30,26 +30,42 @@ d-i partman/early_command string \
 
 ### Prerequisites (Host)
 
-| package | why |
-|---------|-----|
-| `xorriso` | repack hybrid ISO |
-| `bsdtar`  | non-root extraction |
-| `isolinux`| provides `isohdpfx.bin` MBR |
-| `wget`    | download original ISO |
-| `grub-pc-bin` or `grub-efi-amd64-bin` | supplies `grub-mkstandalone` (for UEFI) |
+| Package                              | Why                                                         | Ref                    |
+| ------------------------------------ | ----------------------------------------------------------- | ---------------------- |
+| `xorriso`                            | rebuild hybrid BIOS/UEFI ISO                                | ([GitHub][1])          |
+| `isolinux`                           | ships `isohdpfx.bin` MBR needed by `xorriso -isohybrid-mbr` | ([Ask Ubuntu][2])      |
+| `grub-pc-bin` + `grub-efi-amd64-bin` | provide the EFI boot image                                  | ([Debian Wiki][3])     |
+| `bsdtar` ( `libarchive-tools` )      | unpacks ISO without root                                    | ([Debian Wiki][4])     |
+| `openssl`                            | creates SHA-512 hash with `openssl passwd -6`               | ([James H. Fisher][5]) |
+| `wget`, `md5sum`, `sed`              | misc helpers                                                | docs & man-pages       |
 
-Install them on Debian/Ubuntu:
+
+
+* Install them on Debian/Ubuntu: *
 
 ```bash
 sudo apt update
-sudo apt install xorriso isolinux genisoimage grub-pc-bin grub-efi-amd64-bin bsdtar wget
+sudo apt install xorriso isolinux grub-pc-bin grub-efi-amd64-bin libarchive-tools openssl wget
 ```
 ### Build
 
 ```bash
-./build_iso.sh prod   # vendor-filtered ISO for real hardware
-./build_iso.sh test   # generic ISO for VMs / dev boxes
+./build_iso.sh -m prod   # vendor-filtered ISO for real hardware
+./build_iso.sh -m test -p "r00t  # generic ISO for VMs / dev boxes
 ```
+## Command-line flags recap
+
+| Flag (long / short) | Required | Example | Effect |
+|---------------------|----------|---------|--------|
+| `--mode`  `-m`      | **yes**  | `-m prod` or `-m test` | Chooses which preseed file to embed:<br>• **prod** → `preseed.production.cfg` (Seagate-filter)<br>• **test** → `preseed.test.cfg` (no vendor filter) |
+| `--password`  `-p`  | optional | `-p "M0nkeyLadd3r!"` | Hashes the clear-text with `openssl passwd -6` and injects it, so **john** gets an interactive password as well as his SSH key. Omit to keep john password-less. |
+| `--source`  `-i`    | optional | `-i ~/isos/debian-12.10.0-amd64-netinst.iso` | Use a locally stored netinst ISO instead of downloading the current image from debian.org. |
+
+If `--source` is **not** supplied the script checks for  
+`debian-12.10.0-amd64-netinst.iso` in the working directory and downloads it automatically when missing. :contentReference[oaicite:0]{index=0}
+
+
+
 ### Customising
 
 - Change vendor filter – edit the grep -i Seagate line in partman/early_command.
