@@ -5,7 +5,7 @@
 ```
 debian-raid10-autoiso/
 ├── build_iso.sh
-├── preseed.production.cfg   # <-- filter keeps only Seagate drives
+├── preseed.prod.cfg   # <-- filter keeps only Seagate drives
 └── preseed.test.cfg         # <-- accepts every /dev/sd*   (good for VMs)  
 └── README.md    # <-- these instructions  
 ```
@@ -48,7 +48,6 @@ sudo apt update
 sudo apt install xorriso isolinux grub-pc-bin grub-efi-amd64-bin libarchive-tools openssl wget
 ```
 ### Build
--Edit public ssh key in a preseed
 ```bash
 ./build_iso.sh -m prod   # vendor-filtered ISO for real hardware
 ./build_iso.sh -m test -p "r00t  # generic ISO for VMs / dev boxes
@@ -84,7 +83,7 @@ Everything else—RAID-1 */boot*, RAID-10 PV, LVM root + swap, john’s account,
 ---
 
 ### Customising
-
+- Edit public ssh key in a preseed
 - Change vendor filter – edit the grep -i Seagate line in partman/early_command.
 - Swap size – leave “guided_size max” (installer creates 4 GiB LV) or add an explicit LVM recipe if you need a fixed split.
 - GRUB menu timeout – adjust in isolinux/txt.cfg and boot/grub/grub.cfg before rebuilding.
