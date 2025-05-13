@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-#  build_iso.sh  –  Remaster Debian-12 netinst ISO with unattended preseed
+# build_iso.sh  –  remaster Debian-12 netinst into a fully unattended ISO
 #
-#  Flags:
-#    -m | --mode      prod | test          (required)
-#    -p | --password  "ClearTextPass"      (optional – hashed to SHA-512)
-#    -i | --source    /path/to/netinst.iso (optional – skip auto-download)
+# Flags:
+#   -m | --mode      prod | test      (required)
+#   -p | --password  "ClearText"      (optional – hashes to SHA-512)
+#   -i | --source    netinst.iso      (optional – skip auto-download)
 #
-#  Examples:
-#    ./build_iso.sh -m prod
-#    ./build_iso.sh -m test -p 'S0m3P@ss!'
-#    ./build_iso.sh -m prod -i ~/Downloads/debian-12.10.0-amd64-netinst.iso
+# Example:
+#   ./build_iso.sh -m prod -p 'Str0ng!'          # Seagate filter + local pwd
+#   ./build_iso.sh -m test                       # VM/CI ISO, key-only
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
-# ---- defaults -------------------------------------------------------------
+# ---------------- defaults --------------------------------------------------
 ISO_URL="https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-12.10.0-amd64-netinst.iso"
-ISO_SRC=""               # will hold path after flag parse
-MODE=""
-USERPW=""
+ISO_SRC=""           # set via -i else auto-download
+MODE=""              # prod | test
+USERPW=""            # when set → hashed and inserted
 
-# ---- helper ---------------------------------------------------------------
+# ---------------- helpers ---------------------------------------------------
 need() { command -v "$1" &>/dev/null || { echo "Missing $1"; exit 1; }; }
-usage(){ echo "Usage: $0 -m prod|test [-p password] [-i path_to_iso]"; exit 1; }
+die()  { echo "Error: $*" >&2; exit 1; }
+usage(){ echo "Usage: $0 -m prod|test [-p password] [-i netinst.iso]"; exit 1; }
 
-# ---- parse CLI flags (getopts long+short) ---------------------------------
+# ---------------- arg parse --------------------------------------------------
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -m|--mode)      MODE="$2"; shift 2 ;;
@@ -33,59 +33,85 @@ while [[ $# -gt 0 ]]; do
     *) usage ;;
   esac
 done
-
 [[ "$MODE" == "prod" || "$MODE" == "test" ]] || usage
 
 PRESEED_SRC="preseed.${MODE}.cfg"
-[[ -r "$PRESEED_SRC" ]] || { echo "File $PRESEED_SRC not found"; exit 1; }
+[[ -r "$PRESEED_SRC" ]] || die "$PRESEED_SRC not found"
 
 ISO_OUT="debian-12.10.0-${MODE}.iso"
 
-# ---- tooling checks -------------------------------------------------------
-for bin in xorriso bsdtar wget openssl md5sum sed; do need "$bin"; done  #
+# ---------------- tool checks ------------------------------------------------
+for b in xorriso bsdtar wget openssl md5sum sed awk; do need "$b"; done
 
-# ---- acquire netinst ISO --------------------------------------------------
+# ---------------- acquire original ISO --------------------------------------
 if [[ -n "$ISO_SRC" ]]; then
-  [[ -f "$ISO_SRC" ]] || { echo "Provided --source not found"; exit 1; }
+  [[ -f "$ISO_SRC" ]] || die "--source file not found"
 else
   ISO_SRC="debian-12.10.0-amd64-netinst.iso"
   [[ -f "$ISO_SRC" ]] || { echo "[+] Downloading netinst…"; wget -q --show-progress -O "$ISO_SRC" "$ISO_URL"; }
 fi
 
-# ---- unpack original ISO --------------------------------------------------
+# ---------------- prepare workspace -----------------------------------------
 WORKDIR=$(mktemp -d)
-bsdtar -C "$WORKDIR" -xf "$ISO_SRC"      # Debian wiki recommends bsdtar
+trap 'echo "Temp dir: $WORKDIR"' EXIT
+bsdtar -C "$WORKDIR" -xf "$ISO_SRC"
+chmod -R u+w "$WORKDIR"             # allow in-place edits
 
-# ---- copy & patch preseed --------------------------------------------------
-PRESEED="$WORKDIR/preseed.cfg"
-cp "$PRESEED_SRC" "$PRESEED"
-
-if [[ -n "$USERPW" ]]; then                       # hash w/ OpenSSL SHA-512
+# ---------------- preseed ----------------------------------------------------
+cp "$PRESEED_SRC" "$WORKDIR/preseed.cfg"
+if [[ -n "$USERPW" ]]; then
   HASH=$(openssl passwd -6 "$USERPW")
-  sed -i '/user-password-crypted/d' "$PRESEED"
-  echo "d-i passwd/user-password-crypted password $HASH" >> "$PRESEED"
+  sed -i '/passwd\/user-password-crypted/d' "$WORKDIR/preseed.cfg"
+  echo "d-i passwd/user-password-crypted password $HASH" >> "$WORKDIR/preseed.cfg"
   echo "[+] Embedded SHA-512 hash for john"
 else
-  echo "[+] john remains password-less (SSH key only)"
+  echo "[+] john will be password-less (SSH-key only)"
 fi
 
-# ---- patch boot menus (BIOS & UEFI) ---------------------------------------
-sed -i '0,/^[[:space:]]*append /s?append .*?append vga=788 auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet?' \
-      "$WORKDIR/isolinux/txt.cfg"
-sed -i '0,/^[[:space:]]*linux /s?linux .*?linux /install.amd/vmlinuz auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet?' \
-      "$WORKDIR/boot/grub/grub.cfg"
+# ---------------- BIOS (ISOLINUX) -------------------------------------------
+ISO_TXT="$WORKDIR/isolinux/txt.cfg"
+ISO_CFG="$WORKDIR/isolinux/isolinux.cfg"
 
-# ---- regenerate md5sum list ----------------------------------------------
-(cd "$WORKDIR" && find . -type f -print0 | xargs -0 md5sum > md5sum.txt)   :contentReference[oaicite:5]{index=5}
+# 1. create a dedicated 'auto' label (before first 'label install')
+awk '
+  BEGIN {done=0}
+  /^label install/ && !done {
+      print "label auto";
+      print "  menu label ^Automated install";
+      print "  kernel /install.amd/vmlinuz";
+      print "  append vga=788 console=ttyS0,115200n8 auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet";
+      done=1
+  }
+  {print}
+' "$ISO_TXT" > "$ISO_TXT.new" && mv "$ISO_TXT.new" "$ISO_TXT"
 
-# ---- rebuild hybrid ISO ---------------------------------------------------
-xorriso -as mkisofs -r -J -joliet-long -l \
-  -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \        # isolinux MBR path
+# 2. boot that label instantly
+sed -i 's/^default .*/default auto/' "$ISO_CFG"
+sed -i 's/^timeout .*/timeout 0/'    "$ISO_CFG"
+
+# ---------------- UEFI (GRUB) -----------------------------------------------
+GRUB_CFG="$WORKDIR/boot/grub/grub.cfg"
+
+# put automated entry first
+sed -i '0,/^menuentry / s/menuentry .*/menuentry "Automated install" {/' "$GRUB_CFG"
+sed -i '0,/^[[:space:]]*linux /  s?linux .*?linux /install.amd/vmlinuz console=ttyS0,115200n8 auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet?' "$GRUB_CFG"
+sed -i 's/^set timeout=.*/set timeout=0/' "$GRUB_CFG"
+sed -i 's/^set default=.*/set default=0/' "$GRUB_CFG"
+
+# ---------------- regenerate md5sums ----------------------------------------
+( cd "$WORKDIR" && find . -type f -print0 | xargs -0 md5sum > md5sum.txt )
+
+# ----- ensure we can overwrite any old ISO ----------------------------
+if [[ -e "$ISO_OUT" ]]; then rm -f "$ISO_OUT"; fi     # remove read-only copy
+
+# ---------------- build final ISO -------------------------------------------
+
+xorriso -as mkisofs -r -iso-level 3 -l \
+  -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \
   -c isolinux/boot.cat -b isolinux/isolinux.bin \
   -no-emul-boot -boot-load-size 4 -boot-info-table \
   -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
-  -isohybrid-gpt-basdat \                                # GPT hybrid flag
+  -isohybrid-gpt-basdat \
   -o "$ISO_OUT" "$WORKDIR"
 
-echo "✅  Finished:  $ISO_OUT"
-echo "    Working dir kept: $WORKDIR"
+echo "✅  Finished  $ISO_OUT"
