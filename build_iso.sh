@@ -42,25 +42,25 @@ PRESEED_SRC="preseed.${MODE}.cfg"
 ISO_OUT="debian-12.10.0-${MODE}.iso"
 
 # ---- tooling checks -------------------------------------------------------
-for bin in xorriso bsdtar wget openssl md5sum sed; do need "$bin"; done  # getopts refs: SO & GfG :contentReference[oaicite:0]{index=0}
+for bin in xorriso bsdtar wget openssl md5sum sed; do need "$bin"; done  #
 
 # ---- acquire netinst ISO --------------------------------------------------
 if [[ -n "$ISO_SRC" ]]; then
   [[ -f "$ISO_SRC" ]] || { echo "Provided --source not found"; exit 1; }
 else
   ISO_SRC="debian-12.10.0-amd64-netinst.iso"
-  [[ -f "$ISO_SRC" ]] || { echo "[+] Downloading netinst…"; wget -q --show-progress -O "$ISO_SRC" "$ISO_URL"; }  :contentReference[oaicite:1]{index=1}
+  [[ -f "$ISO_SRC" ]] || { echo "[+] Downloading netinst…"; wget -q --show-progress -O "$ISO_SRC" "$ISO_URL"; }
 fi
 
 # ---- unpack original ISO --------------------------------------------------
 WORKDIR=$(mktemp -d)
-bsdtar -C "$WORKDIR" -xf "$ISO_SRC"      # Debian wiki recommends bsdtar :contentReference[oaicite:2]{index=2}
+bsdtar -C "$WORKDIR" -xf "$ISO_SRC"      # Debian wiki recommends bsdtar
 
 # ---- copy & patch preseed --------------------------------------------------
 PRESEED="$WORKDIR/preseed.cfg"
 cp "$PRESEED_SRC" "$PRESEED"
 
-if [[ -n "$USERPW" ]]; then                       # hash w/ OpenSSL SHA-512 :contentReference[oaicite:3]{index=3}
+if [[ -n "$USERPW" ]]; then                       # hash w/ OpenSSL SHA-512
   HASH=$(openssl passwd -6 "$USERPW")
   sed -i '/user-password-crypted/d' "$PRESEED"
   echo "d-i passwd/user-password-crypted password $HASH" >> "$PRESEED"
@@ -71,7 +71,7 @@ fi
 
 # ---- patch boot menus (BIOS & UEFI) ---------------------------------------
 sed -i '0,/^[[:space:]]*append /s?append .*?append vga=788 auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet?' \
-      "$WORKDIR/isolinux/txt.cfg"                                       :contentReference[oaicite:4]{index=4}
+      "$WORKDIR/isolinux/txt.cfg"
 sed -i '0,/^[[:space:]]*linux /s?linux .*?linux /install.amd/vmlinuz auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet?' \
       "$WORKDIR/boot/grub/grub.cfg"
 
@@ -80,11 +80,11 @@ sed -i '0,/^[[:space:]]*linux /s?linux .*?linux /install.amd/vmlinuz auto=true p
 
 # ---- rebuild hybrid ISO ---------------------------------------------------
 xorriso -as mkisofs -r -J -joliet-long -l \
-  -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \        # isolinux MBR path :contentReference[oaicite:6]{index=6}
+  -isohybrid-mbr /usr/lib/ISOLINUX/isohdpfx.bin \        # isolinux MBR path
   -c isolinux/boot.cat -b isolinux/isolinux.bin \
   -no-emul-boot -boot-load-size 4 -boot-info-table \
   -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot \
-  -isohybrid-gpt-basdat \                                # GPT hybrid flag :contentReference[oaicite:7]{index=7}
+  -isohybrid-gpt-basdat \                                # GPT hybrid flag
   -o "$ISO_OUT" "$WORKDIR"
 
 echo "✅  Finished:  $ISO_OUT"
