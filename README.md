@@ -48,7 +48,7 @@ sudo apt update
 sudo apt install xorriso isolinux grub-pc-bin grub-efi-amd64-bin libarchive-tools openssl wget
 ```
 ### Build
-
+-Edit public ssh key in a preseed
 ```bash
 ./build_iso.sh -m prod   # vendor-filtered ISO for real hardware
 ./build_iso.sh -m test -p "r00t  # generic ISO for VMs / dev boxes
