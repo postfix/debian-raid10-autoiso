@@ -84,82 +84,56 @@ else
   chmod -R u+w "$WK"
 fi
 
-# ------------ generate EARLY_COMMAND shell script for preseed --------------
-# If VENDOR is set, inject it as a variable assignment at the start of the early_command
-VENDOR_ASSIGNMENT=""
-if [[ -n "$VENDOR" ]]; then
-  VENDOR_ASSIGNMENT="VENDOR=\"$VENDOR\"; "
-fi
-# Compose the early_command as a single properly-escaped line
-# The for-loop includes a check to skip removable drives, and every statement ends with a semicolon
-EARLY_COMMAND_SCRIPT=$(cat <<'EOS'
-DISKS="$(for d in /sys/block/sd* /sys/block/vd* /sys/block/nvme*n1 ; do \
-  [ -e "$d" ] || continue; \
-  DEV="/dev/${d##*/}"; \
-  # skip removable drives
-  if [ -e "$d/removable" ] && grep -qx 1 "$d/removable"; then continue; fi; \
-  # skip USB/flash/cdrom/dvd
-  if [ -e "$d/device/model" ] && grep -qiE "(usb|flash|cdrom|dvd)" "$d/device/model"; then continue; fi; \
-  # VENDOR filter
-  if [ -n "$VENDOR" ]; then \
-    mod=$(cat "$d/device/model" 2>/dev/null || echo ""); \
-    echo "$mod" | grep -qi "$VENDOR" || continue; \
-  fi; \
-  echo "DEBUG: $DEV $mod" >> /tmp/early_command_debug.log; \
-  printf "%s " "$DEV"; \
-done; )"; \
-ND=$(echo $DISKS | wc -w); if [ $ND -lt 2 ] || [ $((ND%2)) -ne 0 ]; then logger -t preseed "Need even number of disks (>=2) for RAID10, found $ND"; exit 1; fi; \
-debconf-set partman-auto/method raid; \
-debconf-set partman-auto/disk "$DISKS"; \
-debconf-set partman-auto/expert_recipe "raid10-lvm :: \\ 1024 1024 1024 ext4 \$primary{ } \$bootable{ } method{ raid } . \\ 1000 1000 -1   lvm  method{ raid } ."; \
-BOOT=""; PV=""; \
-for d in $DISKS; do [ "${d#nvme}" != "$d" ] && SFX=p || SFX=""; BOOT="${BOOT}${d}${SFX}1#"; PV="${PV}${d}${SFX}2#"; done; \
-BOOT=${BOOT%#}; PV=${PV%#}; \
-debconf-set partman-auto-raid/recipe "1 $ND 0 ext4 /boot $BOOT . 10 $ND 0 lvm - $PV ."; \
-debconf-set partman-md/confirm true; \
-debconf-set partman-md/confirm_nooverwrite true; \
-debconf-set partman/confirm_write_new_label true
-EOS
-)
-# Prepend VENDOR assignment if needed
-EARLY_COMMAND_SCRIPT_FULL="${VENDOR_ASSIGNMENT}${EARLY_COMMAND_SCRIPT}"
-# Escape for preseed (replace all newlines with space, escape double quotes)
-EARLY_COMMAND_ESCAPED=$(awk '{printf "%s ", $0}' <<< "$EARLY_COMMAND_SCRIPT_FULL" | sed 's/"/\\"/g')
+# Write early.sh script to workspace
+cat > "$WK/early.sh" <<'EOS'
+#!/bin/sh
+# EARLY_COMMAND logic for RAID10+LVM autodetect
+set -e
+exec 2>>/tmp/early_command_debug.log
 
-# ------------ build preseed -------------------------------------------------
+echo "DEBUG: early_command started" >> /tmp/early_command_debug.log
+VENDOR="$VENDOR"
+echo "DEBUG: VENDOR variable (from VENDOR_ASSIGNMENT) in early_command is: '$VENDOR'" >> /tmp/early_command_debug.log
+DISKS="$(for d in /sys/block/sd* /sys/block/vd* /sys/block/nvme*n1 ; do [ -e "$d" ] || continue; DEV="/dev/${d##*/}"; if [ -e "$d/removable" ] && grep -qx 1 "$d/removable"; then echo "DEBUG: Skipping removable disk $DEV" >> /tmp/early_command_debug.log; continue; fi; if [ -e "$d/device/model" ] && grep -qiE "(usb|flash|cdrom|dvd)" "$d/device/model"; then echo "DEBUG: Skipping usb/flash/cdrom/dvd $DEV" >> /tmp/early_command_debug.log; continue; fi; mod="$(cat "$d/device/model" 2>/dev/null || echo "")"; if [ -n "$VENDOR" ]; then if echo "$mod" | grep -Fqi "$VENDOR"; then echo "DEBUG: Disk $DEV model '$mod' matches VENDOR '$VENDOR'" >> /tmp/early_command_debug.log; else echo "DEBUG: Disk $DEV model '$mod' does NOT match VENDOR '$VENDOR', skipping" >> /tmp/early_command_debug.log; continue; fi; fi; echo "DEBUG: Found eligible disk $DEV model '$mod'" >> /tmp/early_command_debug.log; printf "%s " "$DEV"; done; )"
+echo "DEBUG: DISKS='$DISKS'" >> /tmp/early_command_debug.log
+ND=$(echo $DISKS | wc -w)
+echo "DEBUG: ND=$ND" >> /tmp/early_command_debug.log
+if (( ND < 2 )) || (( (ND % 2) != 0 )); then echo "DEBUG: Error: Need even number of disks (>=2) for RAID10, found $ND. Disks: '$DISKS'" >> /tmp/early_command_debug.log; logger -t preseed "Need even number of disks (>=2) for RAID10, found $ND. Disks: '$DISKS'"; exit 1; fi
+echo "DEBUG: Disk check passed. Setting partman-auto/method raid" >> /tmp/early_command_debug.log
+debconf-set partman-auto/method raid
+echo "DEBUG: Setting partman-auto/disk='$DISKS'" >> /tmp/early_command_debug.log
+debconf-set partman-auto/disk "$DISKS"
+echo "DEBUG: Setting partman-auto/expert_recipe" >> /tmp/early_command_debug.log
+debconf-set partman-auto/expert_recipe "raid10-lvm :: \\ 1024 1024 1024 ext4 \$primary{ } \$bootable{ } method{ raid } . \\ 1000 1000 -1 lvm method{ raid } ."
+echo "DEBUG: expert_recipe set. Proceeding to BOOT/PV construction." >> /tmp/early_command_debug.log
+BOOT=""
+PV=""
+echo "DEBUG: Initialized BOOT and PV. Starting loop..." >> /tmp/early_command_debug.log
+for d in $DISKS; do echo "DEBUG: Loop for disk '$d'" >> /tmp/early_command_debug.log; [ "${d#nvme}" != "$d" ] && SFX=p || SFX=""; BOOT="${BOOT}${d}${SFX}1#"; PV="${PV}${d}${SFX}2#"; echo "DEBUG: d='$d', SFX='$SFX', BOOT='$BOOT', PV='$PV'" >> /tmp/early_command_debug.log; done
+echo "DEBUG: Loop finished. BOOT='$BOOT', PV='$PV'" >> /tmp/early_command_debug.log
+BOOT=${BOOT%#}
+PV=${PV%#}
+echo "DEBUG: Trimmed BOOT='$BOOT', PV='$PV'" >> /tmp/early_command_debug.log
+debconf-set partman-auto-raid/recipe "1 $ND 0 ext4 /boot $BOOT . 10 $ND 0 lvm - $PV ."
+echo "DEBUG: partman-auto-raid/recipe set." >> /tmp/early_command_debug.log
+debconf-set partman-md/confirm true
+debconf-set partman-md/confirm_nooverwrite true
+debconf-set partman/confirm_write_new_label true
+echo "DEBUG: Final md and partman confirmations set. early_command finished." >> /tmp/early_command_debug.log
+EOS
+chmod +x "$WK/early.sh"
+
+# Set early_command in preseed to run the script from /cdrom
 PRESEED="$WK/preseed.cfg"
-if [[ $DRY_RUN -eq 1 ]]; then
-  echo "[DRY RUN] Would generate preseed file $PRESEED from preseed.template.cfg and insert early command."
-  # Generate the preseed in a temp file and display it
-  TMP_PRESEED=$(mktemp)
-  awk -v cmd="$EARLY_COMMAND_ESCAPED" '
-    {
-      if ($0 ~ /{{EARLY_COMMAND_HERE}}/) {
-        print "d-i partman/early_command string " cmd
-      } else {
-        print $0
-      }
+awk '
+  {
+    if ($0 ~ /{{EARLY_COMMAND_HERE}}/) {
+      print "d-i partman/early_command string /cdrom/early.sh"
+    } else {
+      print $0
     }
-  ' preseed.template.cfg > "$TMP_PRESEED"
-  echo "[DRY RUN] --- Generated preseed.cfg ---"
-  cat "$TMP_PRESEED"
-  echo "[DRY RUN] --- End of preseed.cfg ---"
-  rm -f "$TMP_PRESEED"
-  echo "[DRY RUN] Would generate md5sum.txt in $WK."
-  echo "[DRY RUN] Would create ISO $ISO_OUT with xorriso."
-  echo "[DRY RUN] ✅  Finished (dry run, no ISO created)"
-  exit 0
-else
-  awk -v cmd="$EARLY_COMMAND_ESCAPED" '
-    {
-      if ($0 ~ /{{EARLY_COMMAND_HERE}}/) {
-        print "d-i partman/early_command string " cmd
-      } else {
-        print $0
-      }
-    }
-  ' preseed.template.cfg > "$PRESEED"
-fi
+  }
+' preseed.template.cfg > "$PRESEED"
 
 if [[ -n $USERPW ]]; then
   if [[ $DRY_RUN -eq 1 ]]; then
@@ -189,14 +163,18 @@ else
      print "  initrd /install.amd/initrd.gz";
      done=1}
    {print}' "$ISO_TXT" >"$ISO_TXT.new" && mv "$ISO_TXT.new" "$ISO_TXT"
-  sed -i 's/^default .*/default auto/' "$ISO_CFG"
-  sed -i 's/^timeout .*/timeout 0/'    "$ISO_CFG"
-  sed -i '1iserial 0 115200'          "$ISO_CFG"
-  sed -i '1iprompt 0'                 "$ISO_CFG"
-  sed -i 's/^set default=.*/set default=0/' "$GRUB_CFG"
-  sed -i 's/^set timeout=.*/set timeout=0/' "$GRUB_CFG"
-  sed -i '0,/^menuentry / s/menuentry .*/menuentry "Automated install" {/' "$GRUB_CFG"
-  sed -i '0,/^[[:space:]]*linux /  s?linux .*?linux /install.amd/vmlinuz console=ttyS0,115200n8 auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet?' "$GRUB_CFG"
+  sed -i \
+      -e 's/^default .*/default auto/' \
+      -e 's/^timeout .*/timeout 0/' \
+      -e '1iserial 0 115200' \
+      -e '1iprompt 0' \
+      "$ISO_CFG"
+  sed -i \
+      -e 's/^set default=.*/set default=0/' \
+      -e 's/^set timeout=.*/set timeout=0/' \
+      -e '0,/^menuentry / s/menuentry .*/menuentry "Automated install" {/' \
+      -e '0,/^[[:space:]]*linux /  s?linux .*?linux /install.amd/vmlinuz console=ttyS0,115200n8 auto=true priority=critical preseed/file=/cdrom/preseed.cfg --- quiet?' \
+      "$GRUB_CFG"
 fi
 
 # ------------ preseed checker -----------------------------------------------
@@ -219,11 +197,15 @@ check_preseed() {
   fi
   # Check preseed syntax with debconf-set-selections if available
   if command -v debconf-set-selections >/dev/null 2>&1; then
-    if ! debconf-set-selections -c "$file" >/dev/null 2>&1; then
-      echo "[ERROR] debconf-set-selections reports a syntax error in $file!" >&2
-      debconf-set-selections -c "$file"  # Show the error
+    # Filter out lines that debconf-set-selections can't parse
+    grep -v '^d-i passwd/user-password-crypted ' "$file" > "$file.debconf"
+    if ! debconf-set-selections -c "$file.debconf" >/dev/null 2>&1; then
+      echo "[ERROR] debconf-set-selections reports a syntax error in $file (filtered)!" >&2
+      debconf-set-selections -c "$file.debconf"  # Show the error
+      rm -f "$file.debconf"
       return 1
     fi
+    rm -f "$file.debconf"
   else
     echo "[WARNING] debconf-set-selections not found; skipping syntax check." >&2
   fi
