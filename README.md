@@ -1,32 +1,18 @@
 # debian-raid10-autoiso
 ## Fully-Automated Debian 12 ISO (RAID-10 + LVM)
 
-###This repository contains:
-```
-debian-raid10-autoiso/
-├── build_iso.sh
-├── preseed.prod.cfg   # <-- filter keeps only Seagate drives
-└── preseed.test.cfg         # <-- accepts every /dev/sd*   (good for VMs)  
-└── README.md    # <-- these instructions  
-```
-### Preseed
-Both preseeds are identical except for one line (highlighted below).
-- preseed.production.cfg – vendor-filtered
-```bash
-###  EARLY_COMMAND — keep ONLY disks whose model contains “Seagate”
-d-i partman/early_command string \
-  DISKS="$(for d in /sys/block/sd*; do \
-      m=$(cat $d/device/model 2>/dev/null); \
-      if echo "$m" | grep -qi Seagate; then echo -n "/dev/${d##*/} "; fi; done)"; \
-  # (the remainder is unchanged …)
-```
-- preseed.test.cfg – accept any vendor disk
-```bash
-###  EARLY_COMMAND — accept every /sys/block/sd*  (no model filter)
-d-i partman/early_command string \
-  DISKS="$(for d in /sys/block/sd*; do echo -n "/dev/${d##*/} "; done)"; \
-  # (the remainder is identical …)
-```
+This repository provides a script to build a **fully unattended Debian 12 installer ISO** that automatically sets up RAID-10 and LVM on all detected not removable disks . The ISO is suitable for both bare-metal and virtualized environments.
+
+---
+
+### Features
+- **Automated disk detection and RAID-10 + LVM setup**: The installer runs a dynamic early_command (injected at build time) that detects all eligible disks and configures RAID-10 and LVM automatically on the target machine.
+- **No disk detection at build time**: The ISO is generic and can be used on any compatible hardware.
+- **Preseed validation**: The build script checks the generated preseed for syntax issues before building the ISO, reducing the risk of installer errors.
+- **Optional password for user**: You can provide a password for the default user, or rely on SSH key authentication only.
+- **Dry run mode**: Test the build process without making any changes or creating files.
+
+---
 
 ### Prerequisites (Host)
 
@@ -37,56 +23,49 @@ d-i partman/early_command string \
 | `grub-pc-bin` + `grub-efi-amd64-bin` | provide the EFI boot image                                  |
 | `bsdtar` ( `libarchive-tools` )      | unpacks ISO without root                                    |
 | `openssl`                            | creates SHA-512 hash with `openssl passwd -6`               |
-| `wget`, `md5sum`, `sed`              | misc helpers                                                | 
+| `wget`, `md5sum`, `sed`              | misc helpers                                                |
 
-
-
-* Install them on Debian/Ubuntu: *
+Install them on Debian/Ubuntu:
 
 ```bash
 sudo apt update
-sudo apt install xorriso isolinux grub-pc-bin grub-efi-amd64-bin libarchive-tools openssl wget
+sudo apt install xorriso isolinux grub-pc-bin grub-efi-amd64-bin libarchive-tools openssl wget debconf-utils
 ```
-### Build
-```bash
-./build_iso.sh -m prod   # vendor-filtered ISO for real hardware
-./build_iso.sh -m test -p "r00t  # generic ISO for VMs / dev boxes
-```
-### Command-line flags
-
-| Flag (long / short) | Required | Example | Effect |
-|---------------------|----------|---------|--------|
-| `--mode`  `-m`      | **yes**  | `-m prod` or `-m test` | Chooses which preseed file to embed:<br>• **prod** → `preseed.production.cfg` (Seagate-filter)<br>• **test** → `preseed.test.cfg` (no vendor filter) |
-| `--password`  `-p`  | optional | `-p "M0nkeyLadd3r!"` | Hashes the clear-text with `openssl passwd -6` and injects it, so **john** gets an interactive password as well as his SSH key. Omit to keep john password-less. |
-| `--source`  `-i`    | optional | `-i ~/isos/debian-12.10.0-amd64-netinst.iso` | Use a locally stored netinst ISO instead of downloading the current image from debian.org. |
-
-If `--source` is **not** supplied the script checks for  
-`debian-12.10.0-amd64-netinst.iso` in the working directory and downloads it automatically when missing. :contentReference[oaicite:0]{index=0}
-
-### Reminder: prod vs test ISOs
-
-| ISO | Drive-selection logic | Use case |
-|-----|----------------------|----------|
-| `debian-12.10.0-prod.iso` | *early_command* keeps `grep -qi Seagate` – only genuine Seagate disks become part of the array. | Bare-metal servers with known hardware. |
-| `debian-12.10.0-test.iso` | *early_command* calls `list-devices disk` – every disk the kernel sees is used. | KVM/virt-io, NVMe workstations, CI pipelines. |
-
-Everything else—RAID-1 */boot*, RAID-10 PV, LVM root + swap, john’s account, key + sudo, GRUB on every disk—remains identical.
-
-### Password & sudo policy
-
-* **Root** is locked.  
-* **john** is created; with no `--password` flag he authenticates **only** via his SSH key, and with `--password` he gets an interactive password hashed to SHA-512.  
-* Late-command adds john to group *sudo* and inserts  
-  `%sudo ALL=(ALL:ALL) NOPASSWD: ALL`  
-  into `/etc/sudoers`, so sudo never prompts.
 
 ---
 
-### Customising
-- Edit public ssh key in a preseed
-- Change vendor filter – edit the grep -i Seagate line in partman/early_command.
-- Swap size – leave “guided_size max” (installer creates 4 GiB LV) or add an explicit LVM recipe if you need a fixed split.
-- GRUB menu timeout – adjust in isolinux/txt.cfg and boot/grub/grub.cfg before rebuilding.
+### Usage
+
+```bash
+./build_iso.sh [-v vendor] [-p password] [-i netinst.iso] [-n]
+```
+
+| Flag (long / short) | Required | Example | Effect |
+|---------------------|----------|---------|--------|
+| `--vendor`  `-v`    | optional | `-v Seagate` | Only use disks whose model matches the vendor string (e.g., only Seagate drives). Omit to use all disks. |
+| `--password`  `-p`  | optional | `-p "M0nkeyLadd3r!"` | Hashes the clear-text with `openssl passwd -6` and injects it, so **john** gets an interactive password as well as his SSH key. Omit to keep john password-less. |
+| `--source`  `-i`    | optional | `-i ~/isos/debian-12.10.0-amd64-netinst.iso` | Use a locally stored netinst ISO instead of downloading the current image from debian.org. |
+| `--dry-run`  `-n`   | optional | `-n` | Run the build in dry run mode (no files are created or modified). |
+
+If `--source` is **not** supplied the script checks for  
+`debian-12.10.0-amd64-netinst.iso` in the working directory and downloads it automatically when missing.
+
+---
+
+### How it works
+- The script injects a **single-line, properly-escaped shell script** into the preseed's `early_command`. This script runs on the target machine during installation, detects all eligible disks, and configures RAID-10 and LVM using debconf-set.
+- The build process **does not run any disk detection or debconf-set on the build host**.
+- After generating the preseed, the script runs a **checker** to validate the preseed file for syntax issues (such as unescaped newlines in early_command). If validation fails, the build aborts with a clear error message.
+
+---
+
+### Troubleshooting
+- If the installer reports: `The installer failed to process the preconfiguration file from file:///cdrom/preseed.cfg. The file may be corrupt.`
+  - The build script now checks for common preseed errors, especially in the early_command.
+  - If you edit the preseed or script, ensure the early_command is a single properly-escaped line (no unescaped newlines, all quotes escaped).
+  - You can manually inspect the generated `preseed.cfg` after build for further debugging.
+
+---
 
 ### Quick KVM test
 
@@ -96,10 +75,12 @@ virt-install --name debian-auto --ram 4096 --vcpus 2 \
   --disk disk1.qcow2,bus=virtio --disk disk2.qcow2,bus=virtio \
   --disk disk3.qcow2,bus=virtio --disk disk4.qcow2,bus=virtio \
   --graphics none --console pty,target_type=serial \
-  --cdrom debian-12.10.0-test.iso \
-  --extra-args 'console=ttyS0,115200n8'
+  --cdrom debian-12.10.0-auto.iso --osinfo detect=on,require=off
+
 virsh console debian-auto
 ```
+
+---
 
 ### First login
 ```bash
@@ -114,3 +95,33 @@ cat /proc/mdstat    # shows md0 (RAID1) + md1 (RAID10)
 sudo sshd -T | grep -E 'passwordauthentication|challengeresponseauthentication|permitrootlogin'
 # → all three report "no"
 ```
+
+---
+
+### Clean up : Stop and delete VM
+
+```bash
+virsh shutdown debian-auto 
+# OR if VM do not respond 
+virsh destroy debian-auto
+virsh undefine debian-auto --remove-all-storage
+```
+
+---
+
+### Customising
+- Edit the public ssh key in the preseed template.
+- Change vendor filter by using the `-v` flag or editing the early_command logic in the script.
+- Adjust swap size or LVM layout by editing the expert_recipe in the script.
+- Change GRUB menu timeout in `isolinux/txt.cfg` and `boot/grub/grub.cfg` before rebuilding.
+
+---
+
+### Notes
+- The ISO is generic and can be used on any compatible hardware or VM.
+- The build script is robust and will abort if the preseed is malformed.
+- For advanced customisation, edit `build_iso.sh` and `preseed.template.cfg` as needed.
+
+[DRY RUN] --- Generated preseed.cfg ---
+... (contents here) ...
+[DRY RUN] --- End of preseed.cfg ---
