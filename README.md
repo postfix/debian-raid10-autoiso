@@ -1,14 +1,15 @@
 # debian-raid10-autoiso
+
 ## Fully-Automated Debian 12 ISO (RAID-10 + LVM)
 
-This repository provides a script to build a **fully unattended Debian 12 installer ISO** that automatically sets up RAID-10 and LVM on all detected not removable disks . The ISO is suitable for both bare-metal and virtualized environments.
+This repository provides a script to build a **fully unattended Debian 12 installer ISO** that automatically sets up RAID-10 (on 4 disks) and LVM (optional) on user-specified disks. The ISO is suitable for both bare-metal and virtualized environments.
 
 ---
 
 ### Features
-- **Automated disk detection and RAID-10 + LVM setup**: The installer runs a dynamic early_command (injected at build time) that detects all eligible disks and configures RAID-10 and LVM automatically on the target machine.
-- **No disk detection at build time**: The ISO is generic and can be used on any compatible hardware.
-- **Preseed validation**: The build script checks the generated preseed for syntax issues before building the ISO, reducing the risk of installer errors.
+- **Automated RAID-10 setup on 4 disks**: The installer uses a preseed file to configure RAID-10 for `/` and swap, and RAID1 for `/boot`.
+- **No early_command or external scripts**: The preseed is simple, robust, and easy to maintain.
+- **User-defined disks**: Specify which disks to use at build time, or use the default (`/dev/sda /dev/sdb /dev/sdc /dev/sdd`).
 - **Optional password for user**: You can provide a password for the default user, or rely on SSH key authentication only.
 - **Dry run mode**: Test the build process without making any changes or creating files.
 
@@ -23,7 +24,7 @@ This repository provides a script to build a **fully unattended Debian 12 instal
 | `grub-pc-bin` + `grub-efi-amd64-bin` | provide the EFI boot image                                  |
 | `bsdtar` ( `libarchive-tools` )      | unpacks ISO without root                                    |
 | `openssl`                            | creates SHA-512 hash with `openssl passwd -6`               |
-| `wget`, `md5sum`, `sed`              | misc helpers                                                |
+| `wget`, `md5sum`, `sed`, `awk`       | misc helpers                                                |
 
 Install them on Debian/Ubuntu:
 
@@ -37,33 +38,72 @@ sudo apt install xorriso isolinux grub-pc-bin grub-efi-amd64-bin libarchive-tool
 ### Usage
 
 ```bash
-./build_iso.sh [-v vendor] [-p password] [-i netinst.iso] [-n]
+./build_iso.sh [-d "/dev/sda /dev/sdb /dev/sdc /dev/sdd"] [-p password] [-i netinst.iso] [-n]
 ```
 
 | Flag (long / short) | Required | Example | Effect |
 |---------------------|----------|---------|--------|
-| `--vendor`  `-v`    | optional | `-v Seagate` | Only use disks whose model matches the vendor string (e.g., only Seagate drives). Omit to use all disks. |
+| `--disks`  `-d`     | yes      | `-d "/dev/sda /dev/sdb /dev/sdc /dev/sdd"` | Use these disks for RAID10. Default: `/dev/sda /dev/sdb /dev/sdc /dev/sdd` |
 | `--password`  `-p`  | optional | `-p "M0nkeyLadd3r!"` | Hashes the clear-text with `openssl passwd -6` and injects it, so **john** gets an interactive password as well as his SSH key. Omit to keep john password-less. |
 | `--source`  `-i`    | optional | `-i ~/isos/debian-12.10.0-amd64-netinst.iso` | Use a locally stored netinst ISO instead of downloading the current image from debian.org. |
+|  `--ssh-key` `-k`   | yes      | `-k` | SSH public key file | 
 | `--dry-run`  `-n`   | optional | `-n` | Run the build in dry run mode (no files are created or modified). |
 
 If `--source` is **not** supplied the script checks for  
 `debian-12.10.0-amd64-netinst.iso` in the working directory and downloads it automatically when missing.
 
+#### **Examples:**
+
+- **Default (use /dev/sda /dev/sdb /dev/sdc /dev/sdd for RAID10):**
+  ```bash
+  ./build_iso.sh
+  ```
+- **Custom disks (must be 4 for RAID10):**
+  ```bash
+  ./build_iso.sh -d "/dev/vda /dev/vdb /dev/vdc /dev/vdd"
+  ```
+- **Set a password for john:**
+  ```bash
+  ./build_iso.sh -p 'r00tMe!'
+  ```
+- **Use a local ISO:**
+  ```bash
+  ./build_iso.sh -i ~/Downloads/debian-12.10.0-amd64-netinst.iso
+  ```
+- **Dry run:**
+  ```bash
+  ./build_iso.sh -n
+  ```
+
 ---
 
 ### How it works
-- The script injects a **single-line, properly-escaped shell script** into the preseed's `early_command`. This script runs on the target machine during installation, detects all eligible disks, and configures RAID-10 and LVM using debconf-set.
-- The build process **does not run any disk detection or debconf-set on the build host**.
-- After generating the preseed, the script runs a **checker** to validate the preseed file for syntax issues (such as unescaped newlines in early_command). If validation fails, the build aborts with a clear error message.
+- The script injects your disk list into the preseed at the `{{DISKS_HERE}}` placeholder.
+- The preseed configures RAID-10 and partitioning using only standard preseed directives—no early_command or custom scripts.
+- The build process does not run any disk detection or debconf-set on the build host.
 
 ---
 
-### Troubleshooting
-- If the installer reports: `The installer failed to process the preconfiguration file from file:///cdrom/preseed.cfg. The file may be corrupt.`
-  - The build script now checks for common preseed errors, especially in the early_command.
-  - If you edit the preseed or script, ensure the early_command is a single properly-escaped line (no unescaped newlines, all quotes escaped).
-  - You can manually inspect the generated `preseed.cfg` after build for further debugging.
+### Customizing the Preseed
+
+In your `preseed.template.cfg`, include this line where you want the disk list:
+
+```
+{{DISKS_HERE}}
+```
+
+The script will replace this with:
+```
+d-i partman-auto/disk string /dev/sda /dev/sdb /dev/sdc /dev/sdd
+```
+(or whatever disks you specify).
+
+The preseed is set up for:
+- `/boot`: 1GB, RAID1 (mirrored on all disks)
+- `swap`: 4GB, RAID10 (across all disks)
+- `/` (root): all remaining space, RAID10 (across all disks)
+
+**To use a different number of disks or a different RAID/LVM layout, edit the preseed/template accordingly.**
 
 ---
 
@@ -82,19 +122,12 @@ virsh console debian-auto
 
 ---
 
-### First login
-```bash
-# password prompt should fail
-ssh john@vm-ip   # press Enter when asked for password – should be denied
-# root login should fail too
-ssh root@vm-ip   # Permission denied
-# check live server config
-ssh john@<new-ip>   # logs in via your SSH key
-sudo lvs            # shows vg0/root + vg0/swap
-cat /proc/mdstat    # shows md0 (RAID1) + md1 (RAID10)
-sudo sshd -T | grep -E 'passwordauthentication|challengeresponseauthentication|permitrootlogin'
-# → all three report "no"
-```
+### Troubleshooting
+- If the installer reports: `The installer failed to process the preconfiguration file from file:///cdrom/preseed.cfg. The file may be corrupt.`
+  - Check that your preseed is valid and that the disk list is correct.
+  - You can manually inspect the generated `preseed.cfg` after build for further debugging.
+- If the installer cannot find the disks, make sure the device names match those in your environment.
+- For RAID10, you must specify exactly 4 disks in the disk list and in the RAID recipe.
 
 ---
 
@@ -102,7 +135,7 @@ sudo sshd -T | grep -E 'passwordauthentication|challengeresponseauthentication|p
 
 ```bash
 virsh shutdown debian-auto 
-# OR if VM do not respond 
+# OR if VM does not respond 
 virsh destroy debian-auto
 virsh undefine debian-auto --remove-all-storage
 ```
@@ -110,18 +143,14 @@ virsh undefine debian-auto --remove-all-storage
 ---
 
 ### Customising
-- Edit the public ssh key in the preseed template.
-- Change vendor filter by using the `-v` flag or editing the early_command logic in the script.
-- Adjust swap size or LVM layout by editing the expert_recipe in the script.
+- Edit the disk list at build time with `-d` or by editing the preseed template.
+- Adjust RAID10 layout by editing the expert_recipe and partman-auto-raid/recipe in the preseed.
 - Change GRUB menu timeout in `isolinux/txt.cfg` and `boot/grub/grub.cfg` before rebuilding.
+- For other RAID/LVM layouts or disk counts, edit the preseed/template accordingly.
 
 ---
 
 ### Notes
-- The ISO is generic and can be used on any compatible hardware or VM.
+- The ISO is generic and can be used on any compatible hardware or VM (with 4 disks for RAID10).
 - The build script is robust and will abort if the preseed is malformed.
 - For advanced customisation, edit `build_iso.sh` and `preseed.template.cfg` as needed.
-
-[DRY RUN] --- Generated preseed.cfg ---
-... (contents here) ...
-[DRY RUN] --- End of preseed.cfg ---
